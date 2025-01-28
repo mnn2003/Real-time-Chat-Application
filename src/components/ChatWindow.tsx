@@ -19,54 +19,50 @@ export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProp
   useEffect(() => {
     fetchMessages();
 
-    // Create a channel for real-time updates
-    const channel = supabase.channel('chat-messages');
-
-    // Subscribe to INSERT events
-    channel
+    const channel = supabase
+      .channel('chat-messages')
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
           table: 'messages',
-          filter: `(sender_id=eq.${currentUser.id} AND receiver_id=eq.${selectedUser.id}) OR (sender_id=eq.${selectedUser.id} AND receiver_id=eq.${currentUser.id})`,
         },
         (payload) => {
-          const newMessage = payload.new as Message;
-          setMessages((currentMessages) => {
-            // Check if message already exists to prevent duplicates
-            const exists = currentMessages.some((msg) => msg.id === newMessage.id);
-            if (exists) {
-              return currentMessages;
+          const newMessage = payload.new;
+
+          // Debugging: Log the incoming payload
+          console.log('Received new message:', newMessage);
+
+          // Check if the message is relevant (sent to/from current user and selected user)
+          if (
+            (newMessage.sender_id === currentUser.id &&
+              newMessage.receiver_id === selectedUser.id) ||
+            (newMessage.sender_id === selectedUser.id &&
+              newMessage.receiver_id === currentUser.id)
+          ) {
+            setMessages((prevMessages) => {
+              // Avoid duplicate messages
+              if (prevMessages.some((msg) => msg.id === newMessage.id)) {
+                return prevMessages;
+              }
+              return [...prevMessages, newMessage];
+            });
+
+            // Mark as read if received by currentUser
+            if (newMessage.receiver_id === currentUser.id) {
+              supabase
+                .from('messages')
+                .update({ read: true })
+                .eq('id', newMessage.id)
+                .then(({ error }) => {
+                  if (error) console.error('Error marking message as read:', error);
+                });
             }
-            return [...currentMessages, newMessage];
-          });
+          }
         }
       )
-      // Subscribe to UPDATE events
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'messages',
-          filter: `(sender_id=eq.${currentUser.id} AND receiver_id=eq.${selectedUser.id}) OR (sender_id=eq.${selectedUser.id} AND receiver_id=eq.${currentUser.id})`,
-        },
-        (payload) => {
-          const updatedMessage = payload.new as Message;
-          setMessages((currentMessages) =>
-            currentMessages.map((msg) =>
-              msg.id === updatedMessage.id ? updatedMessage : msg
-            )
-          );
-        }
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Successfully subscribed to chat messages');
-        }
-      });
+      .subscribe();
 
     return () => {
       channel.unsubscribe();
@@ -74,20 +70,20 @@ export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProp
   }, [currentUser.id, selectedUser.id]);
 
   const fetchMessages = async () => {
-    const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .or(
-        `and(sender_id.eq.${currentUser.id},receiver_id.eq.${selectedUser.id}),` +
-        `and(sender_id.eq.${selectedUser.id},receiver_id.eq.${currentUser.id})`
-      )
-      .order('created_at', { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .or(
+          `and(sender_id.eq.${currentUser.id},receiver_id.eq.${selectedUser.id}),and(sender_id.eq.${selectedUser.id},receiver_id.eq.${currentUser.id})`
+        )
+        .order('created_at', { ascending: true });
 
-    if (error) {
-      console.error('Error fetching messages:', error);
-    } else {
+      if (error) throw new Error('Error fetching messages');
+
       setMessages(data || []);
-      // Mark messages as read
+
+      // Mark all unread messages as read
       const unreadMessages = data?.filter(
         (msg) => msg.receiver_id === currentUser.id && !msg.read
       );
@@ -100,6 +96,8 @@ export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProp
             unreadMessages.map((msg) => msg.id)
           );
       }
+    } catch (error) {
+      console.error('Error fetching messages:', error.message);
     }
   };
 
@@ -107,34 +105,51 @@ export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProp
     e.preventDefault();
     if (!newMessage.trim()) return;
 
-    const newMsg = {
-      sender_id: currentUser.id,
-      receiver_id: selectedUser.id,
-      content: newMessage,
-    };
-
-    // Optimistically add the message to the UI
-    const optimisticMessage: Message = {
-      id: crypto.randomUUID(),
-      ...newMsg,
-      read: false,
-      image_url: null,
-      created_at: new Date().toISOString(),
-    };
-    setMessages((currentMessages) => [...currentMessages, optimisticMessage]);
+    const messageContent = newMessage.trim();
     setNewMessage('');
 
+    // Create optimistic message
+    const optimisticMessage: Message = {
+      id: crypto.randomUUID(),
+      sender_id: currentUser.id,
+      receiver_id: selectedUser.id,
+      content: messageContent,
+      image_url: null,
+      read: false,
+      created_at: new Date().toISOString(),
+    };
+
+    // Add optimistic message to UI
+    setMessages((prevMessages) => [...prevMessages, optimisticMessage]);
+
     // Send the message to the server
-    const { error } = await supabase.from('messages').insert([newMsg]);
+    const { error, data } = await supabase
+      .from('messages')
+      .insert([
+        {
+          sender_id: currentUser.id,
+          receiver_id: selectedUser.id,
+          content: messageContent,
+        },
+      ])
+      .select()
+      .single();
 
     if (error) {
       console.error('Error sending message:', error);
       // Remove the optimistic message if there was an error
-      setMessages((currentMessages) =>
-        currentMessages.filter((msg) => msg.id !== optimisticMessage.id)
+      setMessages((prevMessages) =>
+        prevMessages.filter((msg) => msg.id !== optimisticMessage.id)
       );
-      setNewMessage(newMsg.content); // Restore the message content
+      setNewMessage(messageContent); // Restore the message content
       alert('Failed to send message. Please try again.');
+    } else if (data) {
+      // Replace the optimistic message with the real one
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) =>
+          msg.id === optimisticMessage.id ? data : msg
+        )
+      );
     }
   };
 
