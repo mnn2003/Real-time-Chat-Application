@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Image as ImageIcon } from 'lucide-react';
+import { Send, Image as ImageIcon, ArrowLeft } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { supabase } from '../lib/supabase';
 import type { Profile, Message } from '../App';
@@ -7,9 +7,10 @@ import type { Profile, Message } from '../App';
 interface ChatWindowProps {
   currentUser: Profile;
   selectedUser: Profile;
+  onBack?: () => void;
 }
 
-export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProps) {
+export default function ChatWindow({ currentUser, selectedUser, onBack }: ChatWindowProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -68,6 +69,7 @@ export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProp
       channel.unsubscribe();
     };
   }, [currentUser.id, selectedUser.id]);
+
 
   const fetchMessages = async () => {
     try {
@@ -232,16 +234,24 @@ export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProp
   return (
     <div className="flex flex-col h-full">
       {/* Chat Header */}
-      <div className="px-6 py-4 border-b border-gray-200 bg-white">
+      <div className="px-4 py-3 border-b border-gray-200 bg-white">
         <div className="flex items-center space-x-3">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="p-1 hover:bg-gray-100 rounded-full"
+            >
+              <ArrowLeft className="w-5 h-5 text-gray-500" />
+            </button>
+          )}
           <img
             src={selectedUser.avatar_url || 'https://via.placeholder.com/40'}
             alt={selectedUser.username}
-            className="w-10 h-10 rounded-full"
+            className="w-8 h-8 rounded-full"
           />
           <div>
-            <h3 className="font-semibold">{selectedUser.username}</h3>
-            <p className="text-sm text-gray-500">
+            <h3 className="font-semibold text-sm md:text-base">{selectedUser.username}</h3>
+            <p className="text-xs text-gray-500">
               {selectedUser.status === 'online'
                 ? 'Online'
                 : `Last seen ${formatDistanceToNow(
@@ -254,7 +264,7 @@ export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProp
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
         {messages.map((message) => (
           <div
             key={message.id}
@@ -263,18 +273,18 @@ export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProp
             }`}
           >
             <div
-              className={`max-w-sm rounded-lg p-4 ${
+              className={`max-w-[75%] md:max-w-sm rounded-lg p-3 ${
                 message.sender_id === currentUser.id
                   ? 'bg-blue-500 text-white'
                   : 'bg-white border border-gray-200'
               }`}
             >
-              {message.content && <p>{message.content}</p>}
+              {message.content && <p className="text-sm break-words">{message.content}</p>}
               {message.image_url && (
                 <img
                   src={message.image_url}
                   alt="Shared image"
-                  className="rounded-lg max-w-sm"
+                  className="rounded-lg max-w-full h-auto"
                   loading="lazy"
                 />
               )}
@@ -303,9 +313,9 @@ export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProp
       {/* Message Input */}
       <form
         onSubmit={handleSendMessage}
-        className="px-6 py-4 bg-white border-t border-gray-200"
+        className="px-4 py-3 bg-white border-t border-gray-200"
       >
-        <div className="flex space-x-4">
+        <div className="flex space-x-2">
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -326,7 +336,7 @@ export default function ChatWindow({ currentUser, selectedUser }: ChatWindowProp
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             placeholder="Type a message..."
-            className="flex-1 px-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="flex-1 px-3 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
           />
           <button
             type="submit"
